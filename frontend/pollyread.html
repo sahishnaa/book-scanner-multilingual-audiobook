@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>PolyRead - Multilingual Audiobook Generator</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap');
+    *{box-sizing:border-box}
+    body{font-family:'Poppins',sans-serif;background:linear-gradient(135deg,#3b82f6,#9333ea);min-height:100vh;margin:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#f8fafc}
+    header{position:absolute;top:0;width:100%;background:rgba(255,255,255,.1);backdrop-filter:blur(8px);padding:1rem 2rem;display:flex;justify-content:space-between;align-items:center}
+    header h1{font-size:1.6rem;font-weight:600;color:#fff}
+    nav a{color:#e0e7ff;margin-left:1.5rem;text-decoration:none;font-weight:500;transition:.3s}
+    nav a:hover{color:#facc15}
+    .card{background:rgba(255,255,255,.1);backdrop-filter:blur(12px);border-radius:20px;padding:2.5rem 2rem;width:90%;max-width:650px;box-shadow:0 10px 25px rgba(0,0,0,.3);text-align:center;animation:fadeIn 1s ease-in-out}
+    @keyframes fadeIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+    h2{font-size:1.8rem;color:#fff;margin-bottom:.5rem}
+    p{color:#dbeafe;font-size:1rem;margin-bottom:1.5rem}
+    .upload-box{border:2px dashed #93c5fd;border-radius:12px;padding:2rem;background:rgba(255,255,255,.15);cursor:pointer;margin-bottom:1.5rem;color:#f1f5f9;transition:.3s}
+    .upload-box:hover{background:rgba(255,255,255,.25);transform:scale(1.02)}
+    .file-info{margin:1rem auto;color:#22c55e;font-weight:600}
+    select,button{padding:.7rem 1rem;border-radius:10px;border:none;margin:.5rem 0;font-size:1rem;width:80%;max-width:300px;outline:none}
+    select{background:rgba(255,255,255,.2);color:#fff}
+    select option{color:#000}
+    button{background:linear-gradient(90deg,#3b82f6,#9333ea);color:#fff;font-weight:600;cursor:pointer;transition:.4s;box-shadow:0 0 15px rgba(147,51,234,.4)}
+    button:hover{transform:scale(1.05);box-shadow:0 0 25px rgba(147,51,234,.8)}
+    .progress{width:80%;max-width:360px;height:10px;background:rgba(255,255,255,.2);border-radius:10px;overflow:hidden;margin:1rem auto;display:none}
+    .progress-bar{width:0%;height:100%;background:#22c55e;transition:width .4ss linear}
+audio {
+  width: 80%;
+  margin: 1.5rem auto 0 auto; /* centers horizontally */
+  display: block; /* allows margin auto to work */
+  border-radius: 12px;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
+  display: none;
+}    footer{margin-top:2rem;font-size:.9rem;color:#e2e8f0}
+    .success{color:#22c55e;font-weight:600;margin-top:1rem}
+    .error{color:#fecaca;margin-top:.5rem}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>PolyRead</h1>
+    <nav>
+      <a href="#">Home</a><a href="#">About</a><a href="#">Features</a><a href="#">Contact</a>
+    </nav>
+  </header>
+
+  <div class="card">
+    <h2>Turn Any Page into a Voice</h2>
+    <p>Upload → Translate → Listen as Audiobook</p>
+
+    <div class="upload-box" onclick="document.getElementById('fileInput').click();">
+       Click or Drop Your File Here
+      <input type="file" id="fileInput" accept=".pdf,.png,.jpg,.jpeg,.rtf,.txt" hidden />
+    </div>
+
+    <div id="fileInfo" class="file-info"></div>
+
+    <select id="languageSelect">
+      <option value=""> Select Output Language</option>
+      <option value="en">English</option>
+      <option value="hi">Hindi</option>
+      <option value="es">Spanish</option>
+      <option value="fr">French</option>
+      <option value="de">German</option>
+    </select>
+
+    <br />
+    <button onclick="startConversion()"> Convert to Audio</button>
+
+    <div class="progress" id="progressBarContainer">
+      <div class="progress-bar" id="progressBar"></div>
+    </div>
+
+    <audio id="audioPlayer" controls>
+      <source id="audioSource" type="audio/mpeg" />
+    </audio>
+
+    <div id="ok" class="success"></div>
+    <div id="err" class="error"></div>
+  </div>
+
+  <footer>© 2025 PolyRead</footer>
+<script>
+  const API_PRESIGN = "https://z1y0fm6ay3.execute-api.us-east-1.amazonaws.com/prod/presign";
+  const OUTPUT_BUCKET = "sahi-audiobooks-2025";
+
+  const fileInput = document.getElementById('fileInput');
+  const fileInfo  = document.getElementById('fileInfo');
+  const okMsg     = document.getElementById('ok');
+  const errMsg    = document.getElementById('err');
+  const progressC = document.getElementById('progressBarContainer');
+  const progressB = document.getElementById('progressBar');
+  const audio     = document.getElementById('audioPlayer');
+  const audioSrc  = document.getElementById('audioSource');
+
+  let file = null;
+
+  fileInput.addEventListener("change", (e) => {
+    file = e.target.files[0];
+    if (file) {
+      fileInfo.textContent = `Selected: ${file.name} (${(file.size/1024).toFixed(1)} KB)`;
+      okMsg.textContent = "";
+      errMsg.textContent = "";
+    }
+  });
+
+  async function startConversion(){
+    const lang = document.getElementById("languageSelect").value;
+    if (!file) { alert("Please choose a file first."); return; }
+    if (!lang) { alert("Select language."); return; }
+
+    progressC.style.display = "block";
+    progressB.style.width = "10%";
+    okMsg.textContent=""; errMsg.textContent="";
+
+    try{
+      const ctype = file.type || "application/octet-stream";
+
+      // 1) GET presigned URL (pass ctype so backend signs with it)
+      const presignURL = `${API_PRESIGN}?filename=${encodeURIComponent(file.name)}&lang=${encodeURIComponent(lang)}&ctype=${encodeURIComponent(ctype)}`;
+      const r1 = await fetch(presignURL);
+      if (!r1.ok) throw new Error("presign failed");
+      const { upload_url } = await r1.json();
+
+      progressB.style.width = "35%";
+
+      // 2) PUT upload to S3 with EXACT same headers the URL was signed for
+      const r2 = await fetch(upload_url, {
+        method: "PUT",
+        headers: {
+          "Content-Type": ctype,
+          "x-amz-meta-target_lang": lang     // must match the metadata used to sign
+        },
+        body: file
+      });
+
+      if (!r2.ok) {
+        const t = await r2.text().catch(()=> "");
+        throw new Error(`PUT failed (${r2.status}): ${t}`);
+      }
+
+      progressB.style.width = "65%";
+      okMsg.textContent="Uploaded! Processing… please wait";
+
+      // 3) poll for audio in output bucket
+      await waitForAudio(file.name, lang);
+
+      progressB.style.width = "100%";
+      progressC.style.display = "none";
+      okMsg.textContent="Audio ready!";
+    } catch (e) {
+      errMsg.textContent = e.message;
+      progressC.style.display = "none";
+    }
+    
+  }
+
+  async function waitForAudio(inputName, lang){
+    const key = inputName.replace(/\.[^.]+$/, "") + "_" + lang + ".mp3";
+    const publicUrl = `https://${OUTPUT_BUCKET}.s3.amazonaws.com/${encodeURIComponent(key)}`;
+    for (let i=0;i<24;i++){
+      const head = await fetch(publicUrl, { method:"HEAD" });
+      if (head.ok){
+        audioSrc.src = publicUrl;
+        audio.style.display="block";
+        audio.load();
+        return;
+      }
+      await new Promise(r=>setTimeout(r, 5000));
+    }
+    throw new Error("Timed out waiting for audio (check Lambda logs)");
+  }
+</script>
+
+
+</body>
+</html>
